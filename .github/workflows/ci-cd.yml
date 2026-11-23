@@ -1,0 +1,102 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # 1. Unit tests: pipeline stops here if a test fails
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pytest
+      - run: pytest -v
+
+  # Bonus DevSecOps: static code analysis + dependency vulnerability scan
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install bandit pip-audit
+      - name: SAST with Bandit
+        run: bandit -r app.py -ll
+      - name: Dependency scan with pip-audit
+        run: pip-audit -r requirements.txt
+
+  # 2. Build the package, keep it as an artifact, and store it in S3
+  build:
+    needs: [test, security]
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.pkg.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package application
+        id: pkg
+        run: |
+          VERSION=$(cat VERSION)
+          NAME="build-v${VERSION}-${GITHUB_RUN_NUMBER}.zip"
+          zip -r "$NAME" app.py VERSION requirements.txt static
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build
+          path: ${{ steps.pkg.outputs.name }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      - name: Upload build to S3
+        env:
+          BUCKET: ${{ secrets.S3_BUCKET }}
+          NAME: ${{ steps.pkg.outputs.name }}
+        run: |
+          aws s3 cp "$NAME" "s3://$BUCKET/builds/$NAME"
+          echo "builds/$NAME" > latest.txt
+          aws s3 cp latest.txt "s3://$BUCKET/builds/latest.txt"
+
+  # 3. Deploy the latest build from S3 to EC2, then check production
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      - name: Deploy latest build from S3 to EC2
+        env:
+          BUCKET: ${{ secrets.S3_BUCKET }}
+          INSTANCE: ${{ secrets.EC2_INSTANCE_ID }}
+        run: |
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE" \
+            --document-name "AWS-RunShellScript" \
+            --parameters "commands=[\"/opt/ev-app/deploy.sh $BUCKET $AWS_REGION\"]" \
+            --query "Command.CommandId" --output text)
+          aws ssm wait command-executed --command-id "$CMD_ID" --instance-id "$INSTANCE"
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE" \
+            --query "StandardOutputContent" --output text
+      - name: Verify production runs the new version
+        env:
+          HOST: ${{ secrets.EC2_HOST }}
+          EXPECTED: ${{ needs.build.outputs.version }}
+        run: |
+          for i in $(seq 1 12); do
+            LIVE=$(curl -fsS "http://$HOST/api/version" | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])" || true)
+            echo "Attempt $i: live version = '$LIVE', expected = '$EXPECTED'"
+            [ "$LIVE" = "$EXPECTED" ] && echo "Production is live with v$EXPECTED" && exit 0
+            sleep 5
+          done
+          echo "Production does not show the new version" && exit 1

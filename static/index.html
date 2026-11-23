@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart EV Charging</title>
+<style>
+  :root { --green:#0f7457; --bg:#f3f1ec; --ink:#16231d; --mute:#6b7570; --card:#fff; --red:#a02a1f; --mint:#e0f1ea; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#dcdad4; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; color:var(--ink);
+         display:flex; justify-content:center; }
+  .phone { width:100%; max-width:390px; min-height:100vh; background:var(--bg); display:flex; flex-direction:column; }
+  main { flex:1; padding:28px 22px 12px; }
+  h1 { font-size:26px; margin:6px 0 14px; }
+  .label { font-size:12px; color:var(--mute); margin-bottom:6px; }
+  input { width:100%; padding:12px 14px; border:1px solid #e3e1db; border-radius:12px; font-size:15px; background:#fff; }
+  .map { margin:14px 0; border-radius:16px; overflow:hidden; height:150px; background:#dfe6e0; }
+  .card { background:var(--card); border:1px solid #e3e1db; border-radius:14px; padding:12px 14px; margin-bottom:10px; cursor:pointer; }
+  .card.sel { border:2px solid var(--green); padding:11px 13px; }
+  .row { display:flex; justify-content:space-between; align-items:center; }
+  .card b { font-size:15px; } .sub { font-size:12px; color:var(--mute); margin-top:3px; }
+  .free { color:var(--green); font-weight:600; font-size:13px; text-align:right; }
+  .btn { width:100%; padding:15px; border-radius:12px; border:2px solid var(--green); font-size:15px; font-weight:600;
+         cursor:pointer; background:var(--green); color:#fff; margin-top:6px; }
+  .btn.out { background:#fff; color:var(--green); }
+  .btn.stop { background:#fff; color:var(--red); border-color:var(--red); }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .ringwrap { position:relative; width:220px; height:220px; margin:14px auto; }
+  .ringwrap svg { transform:rotate(-90deg); }
+  .ringtxt { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .ringtxt .big { font-size:46px; font-weight:700; } .ringtxt .kw { font-size:18px; color:var(--mute); }
+  .stats { display:flex; gap:8px; margin-bottom:12px; }
+  .stat { flex:1; background:#fff; border:1px solid #e3e1db; border-radius:12px; padding:9px 11px; }
+  .stat small { font-size:11px; color:var(--mute); display:block; } .stat b { font-size:17px; }
+  .smart { background:var(--mint); border:1px solid #b4dccd; border-radius:12px; padding:11px 13px; font-size:13px; margin-bottom:14px; }
+  .check { width:64px; height:64px; border-radius:50%; background:var(--green); margin:14px auto 8px; display:flex;
+           align-items:center; justify-content:center; color:#fff; font-size:34px; }
+  .center { text-align:center; }
+  .receipt .row { padding:10px 0; border-bottom:1px solid #eceae4; font-size:14px; }
+  .receipt .row:last-child { border:0; font-weight:700; font-size:16px; }
+  nav { display:flex; border-top:1px solid #e3e1db; background:var(--bg); }
+  nav button { flex:1; border:0; background:none; padding:10px 0 14px; font-size:12px; color:var(--mute); cursor:pointer; }
+  nav button.on { color:var(--green); font-weight:700; } nav span { display:block; font-size:20px; }
+  #ver { text-align:center; font-size:11px; color:var(--mute); margin:4px 0; }
+  .hidden { display:none; }
+  .empty { color:var(--mute); text-align:center; margin-top:40px; font-size:14px; }
+</style>
+</head>
+<body>
+<div class="phone">
+  <main>
+    <!-- SCREEN 1: Find and start -->
+    <section id="find">
+      <h1>Find a charger</h1>
+      <div class="label">Search location</div>
+      <input value="Near me">
+      <div class="map">
+        <svg viewBox="0 0 300 150" width="100%" height="100%" preserveAspectRatio="none">
+          <path d="M60 0 L85 150" stroke="#fff" stroke-width="9"/>
+          <path d="M175 0 L165 150" stroke="#fff" stroke-width="7"/>
+          <path d="M0 100 L300 70" stroke="#fff" stroke-width="9"/>
+          <circle cx="215" cy="45" r="9" fill="#7c9a8a"/><circle cx="45" cy="115" r="9" fill="#7c9a8a"/>
+          <circle cx="285" cy="20" r="4" fill="#e8a33a"/>
+          <circle cx="105" cy="82" r="12" fill="#0f7457"/><text x="105" y="87" font-size="14" fill="#fff" text-anchor="middle">⚡</text>
+        </svg>
+      </div>
+      <div id="stations"></div>
+      <button class="btn" id="startBtn">Start charging</button>
+    </section>
+
+    <!-- SCREEN 2: Live charging -->
+    <section id="charge" class="hidden">
+      <h1>Charging now</h1>
+      <div id="noActive" class="empty hidden">No active session.<br>Start one from the Find tab.</div>
+      <div id="activeBox" class="hidden">
+        <div class="label" id="chargeSub"></div>
+        <div class="ringwrap">
+          <svg width="220" height="220" viewBox="0 0 220 220">
+            <circle cx="110" cy="110" r="95" fill="none" stroke="#dcd8cc" stroke-width="16"/>
+            <circle id="ring" cx="110" cy="110" r="95" fill="none" stroke="#0f7457" stroke-width="16"
+                    stroke-linecap="round" stroke-dasharray="596.9" stroke-dashoffset="596.9"/>
+          </svg>
+          <div class="ringtxt"><div class="big" id="soc">0%</div><div class="kw" id="kw">0 kW</div></div>
+        </div>
+        <div class="stats">
+          <div class="stat"><small>Energy</small><b id="energy">0 kWh</b></div>
+          <div class="stat"><small>Time left</small><b id="left">- min</b></div>
+          <div class="stat"><small>Cost</small><b id="cost">0.00</b></div>
+        </div>
+        <div class="smart hidden" id="smart"><b>Smart charging active</b><br>
+          <span id="smartTxt"></span></div>
+        <button class="btn stop" id="stopBtn">Stop charging</button>
+      </div>
+    </section>
+
+    <!-- SCREEN 3: Summary and payment -->
+    <section id="summary" class="hidden">
+      <div class="check">✓</div>
+      <h1 class="center" style="margin-bottom:2px">Session complete</h1>
+      <div class="label center" id="sumSub"></div>
+      <div class="card receipt" style="cursor:default;margin-top:14px">
+        <div class="row"><span>Energy delivered</span><span id="sEnergy"></span></div>
+        <div class="row"><span>Rate</span><span id="sRate"></span></div>
+        <div class="row"><span>Service fee</span><span id="sFee"></span></div>
+        <div class="row"><span>Total</span><span id="sTotal"></span></div>
+      </div>
+      <div class="card row" style="cursor:default"><span>Paid with</span><b id="sCard"></b></div>
+      <button class="btn out" id="rcptBtn">Download receipt</button>
+      <button class="btn" id="doneBtn">Done</button>
+    </section>
+
+    <!-- History tab -->
+    <section id="history" class="hidden">
+      <h1>History</h1>
+      <div id="histList"></div>
+    </section>
+  </main>
+
+  <div id="ver"></div>
+  <nav>
+    <button data-tab="find" class="on"><span>⌖</span>Find</button>
+    <button data-tab="charge"><span>⚡</span>Charge</button>
+    <button data-tab="history"><span>◷</span>History</button>
+  </nav>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const api = (url, method = "GET", body) =>
+  fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined })
+    .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || "Request failed"); return j; });
+
+let stations = [], selected = 1, timer = null, current = null, lastDone = null;
+const money = n => Number(n).toFixed(2);
+
+function show(name) {
+  ["find", "charge", "summary", "history"].forEach(s => $(s).classList.toggle("hidden", s !== name));
+  const tab = name === "summary" ? "charge" : name;
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
+  clearInterval(timer);
+  if (name === "find") loadStations();
+  if (name === "charge") enterCharge();
+  if (name === "history") loadHistory();
+}
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => show(b.dataset.tab));
+
+// ---- Find ----
+async function loadStations() {
+  stations = await api("/api/stations");
+  $("stations").innerHTML = stations.map(s => `
+    <div class="card ${s.id === selected ? "sel" : ""}" data-id="${s.id}">
+      <div class="row"><b>${s.name}</b><span class="free">${s.free} of ${s.connectors} free</span></div>
+      <div class="row"><div class="sub">${s.type}, ${s.distance_km} km</div><div class="sub">${money(s.rate)} / kWh</div></div>
+    </div>`).join("");
+  document.querySelectorAll("#stations .card").forEach(c => c.onclick = () => { selected = +c.dataset.id; loadStations(); });
+  const st = stations.find(s => s.id === selected);
+  $("startBtn").textContent = "Start charging at " + st.name;
+  $("startBtn").disabled = st.free < 1;
+}
+$("startBtn").onclick = async () => {
+  try { await api("/api/sessions", "POST", { station_id: selected }); show("charge"); }
+  catch (e) { alert(e.message); }
+};
+
+// ---- Live charging ----
+async function enterCharge() {
+  current = await api("/api/sessions/active");
+  $("noActive").classList.toggle("hidden", !!current);
+  $("activeBox").classList.toggle("hidden", !current);
+  if (!current) return;
+  render(current);
+  timer = setInterval(async () => { current = await api("/api/sessions/" + current.id); render(current); }, 1000);
+}
+function render(s) {
+  $("chargeSub").textContent = `${s.station_name}, connector ${s.connector}`;
+  $("soc").textContent = s.soc + "%";
+  $("kw").textContent = Math.round(s.power_kw) + " kW";
+  $("ring").style.strokeDashoffset = 596.9 * (1 - s.soc / 100);
+  $("energy").textContent = s.energy_kwh.toFixed(1) + " kWh";
+  $("left").textContent = (s.minutes_left ?? 0) + " min";
+  $("cost").textContent = money(s.cost ?? 0);
+  $("smart").classList.toggle("hidden", !s.limited);
+  $("smartTxt").textContent = `Power is limited to ${Math.round(s.power_kw)} kW so the site stays within grid capacity.`;
+  if (s.soc >= 100) $("stopBtn").click();     // battery full -> finish automatically
+}
+$("stopBtn").onclick = async () => {
+  if (!current) return;
+  clearInterval(timer);
+  lastDone = await api(`/api/sessions/${current.id}/stop`, "POST");
+  showSummary(lastDone);
+};
+
+// ---- Summary ----
+function showSummary(s) {
+  $("sumSub").textContent = `${s.station_name}, ${s.duration_min} min`;
+  $("sEnergy").textContent = s.energy_kwh.toFixed(1) + " kWh";
+  $("sRate").textContent = money(s.rate) + " / kWh";
+  $("sFee").textContent = money(s.service_fee);
+  $("sTotal").textContent = money(s.total);
+  $("sCard").textContent = s.card;
+  show("summary");
+}
+$("doneBtn").onclick = () => { current = null; show("find"); };
+$("rcptBtn").onclick = () => {
+  const s = lastDone;
+  const txt = `SMART EV CHARGING - RECEIPT\n\nSession #${s.id}\n${s.station_name}, ${s.duration_min} min\n` +
+    `Energy delivered: ${s.energy_kwh.toFixed(1)} kWh\nRate: ${money(s.rate)} / kWh\nService fee: ${money(s.service_fee)}\n` +
+    `TOTAL: ${money(s.total)}\nPaid with: ${s.card}\n`;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([txt], { type: "text/plain" }));
+  a.download = `receipt-${s.id}.txt`; a.click();
+};
+
+// ---- History ----
+async function loadHistory() {
+  const rows = await api("/api/history");
+  $("histList").innerHTML = rows.length ? rows.map(s => `
+    <div class="card" style="cursor:default">
+      <div class="row"><b>${s.station_name}</b><b>${money(s.total)}</b></div>
+      <div class="sub">${s.energy_kwh.toFixed(1)} kWh, ${s.duration_min} min</div>
+    </div>`).join("") : `<div class="empty">No sessions yet.</div>`;
+}
+
+api("/api/version").then(v => $("ver").textContent = "Smart EV Charging v" + v.version).catch(() => {});
+show("find");
+</script>
+</body>
+</html>
